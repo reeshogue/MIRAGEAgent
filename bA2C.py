@@ -18,24 +18,11 @@ import numpy as np
 import random
 import pickle
 import keras_contrib as KC
-from time import sleep
-
-
-from layers import *
-
-import psutil
-psutil.cpu_percent()
-
-
-def cpu_usage():
-    cpu = psutil.cpu_percent()
-    print("CPU Usage:", np.ceil(cpu), "%.")
-    return cpu
 
 def swish(x):
     return K.sigmoid(x) * x
     
-class bDQN:
+class MIRAGEAgent:
     def __init__(self, state_shape, action_shape):
         self.state_size = state_shape
         self.action_size = action_shape
@@ -56,69 +43,59 @@ class bDQN:
         self.list_rewards = [0.01]
         
     def build_generator(self):
-        def conv2d(layer_input, filters, stride, f_size=4, activation=swish, bn=True, action_size=None):
-            d = tfp.layers.Convolution2DFlipout(filters, f_size, stride, padding='same', activation=activation)(layer_input)
-            if bn:
-                d = BatchNormalization(momentum=0.8)(d)
-            return d
+        def conv2d_head(x, filters, stride, f_size=4, activation=swish, action_size=None):
+            x = tfp.layers.Convolution2DFlipout(filters, f_size, stride, padding='same', activation=activation)(x)
+            return x
         
-        def rnn(layer_input, filters, f_size=4, activation=swish, bn=True, reshape=True, stateful=True):
-            shape = tf.keras.backend.int_shape(layer_input)
-            print(shape)
+        def rnn_body(x, units, activation=swish, reshape=True, stateful=True):
+            shape = tf.keras.backend.int_shape(x)
 
             if reshape:
-                layer_input = tf.keras.layers.Reshape((shape[1], shape[2]))(layer_input)
-            
-            d = tf.keras.layers.LSTM(filters, activation=activation, stateful=stateful)(layer_input)
-            if bn:
-                d = BatchNormalization(momentum=0.7)(d)
-
-            return d
-
-        def tail(x, action_size):
+                x = tf.keras.layers.Reshape((shape[1], shape[2]))(x)
+            x = tf.keras.layers.LSTM(units, activation=activation, stateful=stateful)(x)
+            return x
+        
+        def capsule_tail(x, action_size):
             x_shape = K.int_shape(x)
             x = Reshape((1, 1, x_shape[1]))(x)
-            x = KC.layers.Capsule(action_size, 10, 4, True)(x)
+            x = KC.layers.Capsule(action_size, 10, 4, False)(x)
             x = Lambda(lambda x: K.sqrt(K.sum(K.square(x), 2)))(x)
             return x
 
-        d0 = Input(batch_shape=(1,)+self.state_size)
-
-        self.gf *= 1
-        d1 = conv2d(d0, self.gf, 3, bn=False)
+        #Batch shape for stateful rnn.
+        inp = Input(batch_shape=(1,)+self.state_size)
+        x = conv2d_head(inp, 4, 3)
+        x = conv2d_head(x, 8, 2)
         
-        self.gf *= 2
+        x = conv2d_head(x, 16, 2)
+        x = conv2d_head(x, 32, 1)
+        x = conv2d_head(x, 1, 1)
 
-        d2 = conv2d(d1, self.gf, 2)
-        self.gf *= 2
-        
-        d3 = conv2d(d2, self.gf, 2)
-        d4 = conv2d(d3, self.gf, 1)
-        d5 = conv2d(d4, 1, 1)
+        x = rnn_body(x, self.action_size // 2)
 
-        d6 = rnn(d5, self.action_size // 4)
+        output_act = capsule_tail(x, self.action_size)
 
-        output_act = tail(d6, self.action_size)
-
-        model = Model(d0, output_act)
+        model = Model(inp, output_act)
         model.summary()
         return model
  
     def build_discriminator(self):
         def conv2d(layer_input, filters, stride, f_size=4, activation=swish, bn=True, action_size=None):
-            d = tfp.layers.Convolution2DFlipout(filters, f_size, stride, padding='same', activation=activation)(layer_input)
-            if bn:
-                d = BatchNormalization(momentum=0.8)(d)
-            return d
+            x = tfp.layers.Convolution2DFlipout(filters, f_size, stride, padding='same', activation=activation)(layer_input)
+            return x
+        
         def tail(x, action_size):
-            x = Flatten()(x)
-            x = tfp.layers.DenseFlipout(action_size, activation='linear')(x)
+            x_shape = K.int_shape(x)
+            x = Reshape((1, 1, x_shape[1]))(x)
+            x = KC.layers.Capsule(action_size, 10, 4, False)(x)
+            x = Lambda(lambda x: K.sqrt(K.sum(K.square(x), 2)))(x)
+            
             return x
 
-        g0 = Input(shape=self.state_size)
-        g1 = conv2d(g0, self.df, 8)
-        g2 = conv2d(g1, self.df * 2, 4)
-        output_crit = tail(g2, 1)
+        inp = Input(shape=self.state_size)
+        x = conv2d(inp, self.df, 8)
+        x = conv2d(x, self.df * 2, 4)
+        output_crit = tail(x, 1)
 
         model = Model(g0, output_crit)
         model.summary()
@@ -186,9 +163,4 @@ class bDQN:
         return x
     
 if __name__ == '__main__' :
-    dqn = 3
-    y = KC.layers.Capsule(1, 17, 3)
-    y.apply(dqn)
-    bdqn = bDQN((1920,1080,3), 1920)
-    
-
+    mirage = MIRAGEAgent((1920,1080,3), 1920)
