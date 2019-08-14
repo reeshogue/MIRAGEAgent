@@ -26,10 +26,6 @@ class MIRAGEAgent:
     def __init__(self, state_shape, action_shape):
         self.state_size = state_shape
         self.action_size = action_shape
-        self.memory = deque(maxlen=50)
-
-        self.max_len = 50
-        self.actor_editable_memory = np.zeros((1, self.max_len))
         self.lr = 0.001
         self.gf = 4
         self.df = 4
@@ -80,8 +76,8 @@ class MIRAGEAgent:
         return model
  
     def build_discriminator(self):
-        def conv2d(layer_input, filters, stride, f_size=4, activation=swish, bn=True, action_size=None):
-            x = tfp.layers.Convolution2DFlipout(filters, f_size, stride, padding='same', activation=activation)(layer_input)
+        def conv2d(x, filters, stride, f_size=4, activation=swish, bn=True, action_size=None):
+            x = tfp.layers.Convolution2DFlipout(filters, f_size, stride, padding='same', activation=activation)(x)
             return x
         
         def tail(x, action_size):
@@ -93,8 +89,8 @@ class MIRAGEAgent:
             return x
 
         inp = Input(shape=self.state_size)
-        x = conv2d(inp, self.df, 8)
-        x = conv2d(x, self.df * 2, 4)
+        x = conv2d(inp, 4, 8)
+        x = conv2d(x, 8, 4)
         output_crit = tail(x, 1)
 
         model = Model(g0, output_crit)
